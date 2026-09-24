@@ -30,6 +30,10 @@ jobs:
       - name: Executar testes
         run: npm test
 
+      # 4.5. Executa a Verificação de Dependências (SCA)
+      - name: Verificar vulnerabilidades de dependências (SCA)
+        run: npm audit --audit-level=high
+
       - name: Configurar Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -51,11 +55,35 @@ jobs:
             type=sha
             type=raw,value=latest
 
-      - name: Build e Push da Imagem Docker
+      # 1. Build: gera a imagem localmente (sem publicar) para o Trivy poder escaneá-la
+      - name: Build da Imagem Docker
+        id: docker_build
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          push: false
+          load: true
+          tags: ci-scan:${{ github.sha }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      # 2. Verificação de Contêiner (Trivy) - roda entre o build e o push
+      - name: Verificar vulnerabilidades da imagem (Container Scan)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ci-scan:${{ github.sha }}
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: 'CRITICAL'
+
+      # 3. Push: só publica no GHCR se for push na main E se o Trivy não tiver falhado
+      - name: Push da Imagem Docker
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
